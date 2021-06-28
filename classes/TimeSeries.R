@@ -8,6 +8,8 @@ TimeSeries <- R6Class("TimeSeries", list(
   freq = "day",
   h = NULL,
   values = NULL,
+  warehouse_id = NULL,
+  article_id = NULL,
   initialize = function(id, valid_from, valid_to, freq = "day", h, values) {
     stopifnot(is.character(id), length(id) == 1)
     stopifnot(is.Date(valid_from))
@@ -23,6 +25,11 @@ TimeSeries <- R6Class("TimeSeries", list(
     self$freq <- freq
     self$h <- h
     self$values <- values
+    
+    splitted_id<-unlist(strsplit(id, "\\."))
+    self$warehouse_id = splitted_id[1]
+    self$article_id = splitted_id[2]
+    
   },
   make_ts = function() {
     # TODO: calculate frequency based on $freq

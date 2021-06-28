@@ -1,78 +1,104 @@
 library(data.table)
 library(lubridate)
 library(ggplot2)
+library(forecast)
+library(BBmisc)
+library(zoo)
+
+source("classes/TimeSeries.R")
+source("classes/InfluxConnector.R")
+source("functions/read_from_file.R")
+source("functions/read_from_database.R")
 
 
-# read meta info file
-meta_info <- fread("data/master_data.csv")
-# make a combined unique id from warehouse/article id and 
-meta_info[, id:=paste(warehouse_id, article_id, sep=".")]
-# set it as key for faster lookup-time
-setkey(meta_info, id)
+# Config
+load_from_db = FALSE
+meta_file_location = "data/master_data.csv"
+value_file_location = "data/movement_data.csv"
 
-
-# load historic values
-movement_data <- fread("data/movement_data.csv")
-# re-name date_time to time
-names(movement_data)[names(movement_data)=="date_time"] <- "time"
-
-
-# split up data table into multiple data tables depending on identifier
-movement_data_list = split(movement_data, 
-                           with(movement_data, 
-                                interaction(warehouse_id, article_id)), 
-                           drop = TRUE)
-
-# loop over each warehouse/product combination
-for (i in 1:length(movement_data_list)) { 
-  
-  # remove redundant information 
-  movement_data_list[[i]][ ,c(1,2)] <- list(NULL)
-
-  # get the id of the current time series
-  combined_id = names(movement_data_list[i])
-  
-  # lookup associated meta info
-  meta_info_entry = meta_info[.(combined_id)]
-  n_steps = meta_info_entry$n_steps
-  
-  # create 'empty' time series which has no gaps in the time frame
-  DT = data.table(
-    time = seq(from = meta_info_entry$from, to = meta_info_entry$to, by=1),
-    quantity = 0
-  )
-  # merge empty series with actual data
-  movement_data_list[[i]] = rbindlist(list(movement_data_list[[i]], DT))
- 
-  # order series by time asc
-  setorder(movement_data_list[[i]], time)
-  
-  # if same times_tamp is present multiple times in the series -> sum them up
-  movement_data_list[[i]] = movement_data_list[[i]][,list(quantity=sum(quantity)),by=time]
-  
-  # aggregate by week (monday)
-  movement_data_list[[i]] = movement_data_list[[i]][, .(quantity = sum(quantity)),
-                                                        by = .(time = floor_date(time, "week", 1))]
-  
+# acquire input data
+time_series_list = NULL
+if (load_from_db) {
+  time_series_list = read_ts_from_db(meta_file_location, value_file_location)
+} else {
+  time_series_list = read_ts_from_file(meta_file_location, value_file_location)
 }
 
+# open connection to Influxdb for writing
+connector = InfluxConnector$new()
+connector$init_forecast_db()
 
-# save to class
-combined_id = names(movement_data_list[1])
-meta_info_entry = meta_info[.(combined_id)]
-n_steps = meta_info_entry$n_steps
-from = meta_info_entry$from
-to = meta_info_entry$to
+# perform forecasting and evaluation
+N = length(time_series_list)
+for (i in 1:N) { 
+  
+  ts_obj = ts(time_series_list[[i]]$values$quantity, 
+              start = decimal_date(min(time_series_list[[i]]$values$time)), 
+              frequency = 365.25/7)
+  h = time_series_list[[i]]$h
+  
+  # perform cross validation of and calculate the RMSE
+  
+  # NAIVE METHOD
+  res = tsCV(ts_obj, rwf, h=h)
+  rmse_naive = sqrt(mean(res^2, na.rm=TRUE))
+  
+  best_method = rwf
+  best_rmse = rmse_naive
+  
+  # SEASONAL NAIVE METHOD
+  res = tsCV(ts_obj, snaive, h=h)
+  rmse_snaive = sqrt(mean(res^2, na.rm=TRUE))
+  
+  if (rmse_snaive < best_rmse) {
+    best_method = snaive
+    best_rmse = rmse_snaive
+  }
+  
+  # EXP SMOOTH METHOD
+  res = tsCV(ts_obj, ses, h=h)
+  rmse_ses = sqrt(mean(res^2, na.rm=TRUE))
+  
+  if (rmse_ses < best_rmse) {
+    best_method = ses
+    best_rmse = rmse_ses
+  }
 
-historic_values_1 <- TimeSeries$new(id = combined_id, 
-                                        valid_from = from, 
-                                        valid_to = to,
-                                        h = n_steps, 
-                                        values = movement_data_list[[1]])
 
-historic_values_1$make_ts()
-
+  ts_forecast = best_method(ts_obj, h=h)
+  
+  cat("Best Method: ", ts_forecast$method, "\n")
+  cat("RMSE Value: ", best_rmse, "\n")
+  
+  if (!is.null(ts_forecast$model$future)) {
+    df = head(data.frame(best_forecast=as.matrix(ts_forecast$model$future),
+                         quantity=as.matrix(ts_forecast$model$future),
+                         time=as.Date(as.yearmon(time(ts_forecast$model$future))),
+                         n=h,
+                         best_method=ts_forecast$method), 
+              n = h)
+  } else {
+ 
+    df = tail(data.frame(best_forecast=as.matrix(ts_forecast$model$states),
+                         quantity=as.matrix(ts_forecast$model$states),
+                         time=as.Date(as.yearmon(time(ts_forecast$model$states))),
+                         n=h,
+                         best_method=ts_forecast$method), 
+              n = h)
+  }
+  colnames(df) <- c('best_forecast','quantity','time', 'n', 'best_method')
+  
+  
+  time_series_list[[i]]$values = df
+  #df = time_series_list[[i]]$values
+  df$warehouse_id = time_series_list[[i]]$warehouse_id
+  df$article_id = time_series_list[[i]]$article_id
+  df$time = as.POSIXct(df$time, origin="1970-01-01")
+  print("Persisting")
+  connector$persist_df(df)
+  print("End")
+}
 
 # clear up environment
-rm(list = ls())
+#rm(list = ls())
 

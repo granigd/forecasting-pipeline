@@ -11,7 +11,7 @@ InfluxConnector <- R6Class("InfluxConnector", list(
   password = NULL,
   conn = NULL,
   db_name = NULL,
-  3 = function(host = "localhost", port = 8086, 
+  initialize = function(host = "localhost", port = 8086, 
                         username = NULL, password = NULL, db_name = "forecast_db") {
     self$host <- host
     self$port <- port
