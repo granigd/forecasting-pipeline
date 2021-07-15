@@ -16,7 +16,7 @@ TimeSeries <- R6Class("TimeSeries", list(
     stopifnot(is.Date(valid_to))
     stopifnot(is.character(freq), is.element(freq, c('day', 'week', 'month', 'year')))
     stopifnot(is.numeric(h))
-    stopifnot(is.data.table(values))
+    #stopifnot(is.data.table(values))
     
     
     self$id <- id
@@ -33,7 +33,9 @@ TimeSeries <- R6Class("TimeSeries", list(
   },
   make_ts = function() {
     # TODO: calculate frequency based on $freq
-    ts_values <- ts(movement_data_list[[4]]$quantity, start = decimal_date(min(movement_data_list[[4]]$date_time)), frequency = 365.25/7)
+    ts_values <- ts(movement_data_list[[4]]$quantity, 
+                    start = decimal_date(min(movement_data_list[[4]]$date_time)), 
+                    frequency = 365.25/7)
     return(ts_values)
   }
 ))

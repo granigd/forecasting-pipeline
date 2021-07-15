@@ -71,6 +71,7 @@ if __name__ == "__main__":
                     original_index = 0
                 time_series_to_generate -= 1
             else:
+                print(f"Generated warehouse {i_wh} from {max_warehouse_id + num_new_warehouses}")
                 continue
             break
 
