@@ -32,9 +32,8 @@ TimeSeries <- R6Class("TimeSeries", list(
     
   },
   make_ts = function() {
-    # TODO: calculate frequency based on $freq
     ts_values <- ts(movement_data_list[[4]]$quantity, 
-                    start = decimal_date(min(movement_data_list[[4]]$date_time)), 
+                    start = decimal_date(min(movement_data_list[[4]]$date_time)),
                     frequency = 365.25/7)
     return(ts_values)
   }
